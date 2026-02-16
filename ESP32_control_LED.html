@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>ESP32 LED 控制 | iOS</title>
+  <style>
+    /* iOS 原生風格樣式 */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    }
+    body {
+      background-color: #f5f5f7;
+      padding: 20px;
+      max-width: 500px;
+      margin: 0 auto;
+    }
+    .container {
+      background: white;
+      border-radius: 20px;
+      padding: 30px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    }
+    h1 {
+      font-size: 24px;
+      color: #1d1d1f;
+      text-align: center;
+      margin-bottom: 30px;
+      font-weight: 600;
+    }
+    .status-card {
+      background: #f8f8fa;
+      border-radius: 12px;
+      padding: 15px;
+      margin-bottom: 25px;
+    }
+    .status-title {
+      font-size: 14px;
+      color: #86868b;
+      margin-bottom: 8px;
+    }
+    .status-value {
+      font-size: 16px;
+      color: #1d1d1f;
+      font-weight: 500;
+    }
+    .btn-group {
+      display: flex;
+      gap: 15px;
+      justify-content: center;
+      margin-top: 20px;
+    }
+    .control-btn {
+      width: 120px;
+      height: 70px;
+      border-radius: 15px;
+      border: none;
+      font-size: 28px;
+      font-weight: 600;
+      color: white;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .on-btn {
+      background-color: #30d158;
+    }
+    .on-btn:active {
+      background-color: #28c04e;
+    }
+    .off-btn {
+      background-color: #ff3b30;
+    }
+    .off-btn:active {
+      background-color: #e5352a;
+    }
+    .led-status {
+      text-align: center;
+      margin-top: 25px;
+      font-size: 18px;
+      color: #1d1d1f;
+      font-weight: 500;
+    }
+    .loading {
+      color: #007aff;
+    }
+    .success {
+      color: #30d158;
+    }
+    .error {
+      color: #ff3b30;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>LED 123 控制器</h1>
+    
+    <!-- MQTT 連接狀態 -->
+    <div class="status-card">
+      <div class="status-title">MQTT 連接狀態</div>
+      <div id="mqtt-status" class="status-value loading">正在連接...</div>
+    </div>
+
+    <!-- LED 當前狀態 -->
+    <div class="status-card">
+      <div class="status-title">LED 當前狀態</div>
+      <div id="led-status" class="status-value">未更新</div>
+    </div>
+
+    <!-- 控制按鈕 -->
+    <div class="btn-group">
+      <button class="control-btn on-btn" onclick="sendCommand('ON')">ON</button>
+      <button class="control-btn off-btn" onclick="sendCommand('OFF')">OFF</button>
+    </div>
+  </div>
+
+  <!-- MQTT.js 庫（CDN） -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script>
+    // -------------------------- 配置參數（已修改 Port 為 8884） --------------------------
+    const MQTT_HOST = 'wss://mqtt-dashboard.com:8884/mqtt'; // 重點：Port 改為 8884
+    const CONTROL_TOPIC = 'myhome/test/led123';             // 發送控制指令的主題
+    const STATUS_TOPIC = 'myhome/test/led123/status';       // 訂閱 LED 狀態的主題
+    // -----------------------------------------------------------------------------------
+
+    let mqttClient;
+    const mqttStatusEl = document.getElementById('mqtt-status');
+    const ledStatusEl = document.getElementById('led-status');
+
+    // 初始化 MQTT 連接
+    function initMQTT() {
+      // 建立 MQTT 連接（Port 8884）
+      mqttClient = mqtt.connect(MQTT_HOST, {
+        clientId: 'iOS-LED-Control-' + Math.random().toString(16).substr(2, 8),
+        clean: true,
+        reconnectPeriod: 3000, // 斷線後 3 秒自動重連
+        connectTimeout: 10000,
+        keepalive: 60
+      });
+
+      // 連接成功回調
+      mqttClient.on('connect', () => {
+        mqttStatusEl.textContent = '已連接 mqtt-dashboard.com:8884';
+        mqttStatusEl.className = 'status-value success';
+        
+        // 訂閱 LED 狀態主題
+        mqttClient.subscribe(STATUS_TOPIC, (err) => {
+          if (!err) {
+            console.log(`已訂閱狀態主題：${STATUS_TOPIC}`);
+          } else {
+            mqttStatusEl.textContent = '訂閱狀態主題失敗';
+            mqttStatusEl.className = 'status-value error';
+          }
+        });
+      });
+
+      // 連接失敗回調
+      mqttClient.on('error', (err) => {
+        mqttStatusEl.textContent = '連接失敗：' + err.message;
+        mqttStatusEl.className = 'status-value error';
+        console.error('MQTT 錯誤：', err);
+      });
+
+      // 斷線回調
+      mqttClient.on('close', () => {
+        mqttStatusEl.textContent = '連接中斷，正在重連...';
+        mqttStatusEl.className = 'status-value loading';
+      });
+
+      // 接收訊息回調（顯示 LED 狀態）
+      mqttClient.on('message', (topic, payload) => {
+        if (topic === STATUS_TOPIC) {
+          const status = payload.toString().trim();
+          if (status === 'ON' || status === 'OFF') {
+            ledStatusEl.textContent = status === 'ON' ? '開啟' : '關閉';
+          } else {
+            ledStatusEl.textContent =  status;
+          }
+        }
+      });
+    }
+
+    // 發送控制指令
+    function sendCommand(cmd) {
+      // 檢查 MQTT 連接狀態
+      if (!mqttClient || !mqttClient.connected) {
+        alert('MQTT 尚未連接，請稍後再試！');
+        return;
+      }
+
+      // 發布指令到控制主題
+      mqttClient.publish(CONTROL_TOPIC, cmd, (err) => {
+        if (err) {
+          alert('指令發送失敗：' + err.message);
+        } else {
+          // 即時更新本地狀態（輔助顯示）
+          ledStatusEl.textContent = cmd === 'ON' ? '開啟（發送中）' : '關閉（發送中）';
+          console.log(`已發送指令 ${cmd} 到 ${CONTROL_TOPIC}`);
+        }
+      });
+    }
+
+    // 頁面加載完成後初始化
+    window.addEventListener('load', initMQTT);
+
+    // iOS 螢幕旋轉適配
+    window.addEventListener('orientationchange', () => {
+      document.body.style.width = window.innerWidth + 'px';
+    });
+  </script>
+</body>
+</html>
